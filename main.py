@@ -29,6 +29,30 @@ bot = Bot(token=BOT_TOKEN,
           default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)) 
 dp = Dispatcher()
 
+
+# --- АГРЕССИВНЫЙ ПОИСК КОНТЕНТА (ФИНАЛЬНОЕ РЕШЕНИЕ) ---
+def find_ai_content(data):
+    """Рекурсивно ищет ключ 'content' в любой части JSON-объекта и возвращает его."""
+    
+    if isinstance(data, dict):
+        # 1. Если это словарь, проверяем, содержит ли он 'content'
+        if 'content' in data and isinstance(data['content'], str):
+            return data['content']
+        # 2. Ищем вложенные словари и списки
+        for key, value in data.items():
+            result = find_ai_content(value)
+            if result:
+                return result
+    
+    elif isinstance(data, list):
+        # 3. Если это список, ищем в каждом элементе
+        for item in data:
+            result = find_ai_content(item)
+            if result:
+                return result
+    return None
+
+
 # --- 3. Вспомогательная функция для запроса к Gen-API (Long Polling) ---
 async def generate_response_from_api(user_text: str) -> str:
     """Отправляет запрос на Gen-API и ждет результата через Long Polling с универсальным парсингом."""
@@ -85,27 +109,13 @@ async def generate_response_from_api(user_text: str) -> str:
 
             if current_status == "success":
                 
-                # --- АГРЕССИВНЫЙ УНИВЕРСАЛЬНЫЙ ПАРСЕР: ПОИСК ТЕКСТА ---
-                result_list = None
+                # --- ИСПОЛЬЗУЕМ АГРЕССИВНЫЙ ПОИСК ---
+                ai_content = find_ai_content(data_check)
                 
-                # Поиск 1: В ключе 'output' (Старый формат)
-                if isinstance(data_check.get("output"), list):
-                    result_list = data_check.get("output")
-                
-                # Поиск 2: В ключе 'response' (Новый формат из логов)
-                elif isinstance(data_check.get("response"), list):
-                    result_list = data_check.get("response")
-                    
-                # Поиск 3: Если сам ответ - это список (Синхронный/Корневой формат)
-                elif isinstance(data_check, list):
-                    result_list = data_check
-                    
-                
-                if result_list and len(result_list) > 0 and result_list[0].get("message") and result_list[0]["message"].get("content"):
-                    # Получаем контент
-                    return result_list[0]["message"]["content"]
+                if ai_content:
+                    return ai_content
                 else:
-                    # Если формат ответа success, но структуру найти не удалось
+                    # Если текст найти не удалось
                     logging.error(f"Success, but UNPARSABLE structure: {data_check}")
                     return "❌ Успех получен, но не удалось извлечь текст ответа (проблема с JSON-структурой)."
                     
