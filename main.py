@@ -27,6 +27,7 @@ URL_GET_REQUEST = "https://api.gen-api.ru/api/v1/request/get/"
 SYSTEM_PROMPT = "Ты — Андрей Куракин, опытный инструктор скаутского лагеря с 20-летним стажем. Твой стиль общения — бодрый и структурированный. Твоя задача — помочь составить программу дня для группы детей. Отвечай только по делу, используя скаутские принципы."
 
 # --- 2. Инициализация ---
+# Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN, 
           default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)) 
 dp = Dispatcher()
@@ -34,7 +35,10 @@ dp = Dispatcher()
 
 # --- 3. Вспомогательная функция для запроса к Gen-API (Long Polling) ---
 async def generate_response_from_api(user_text: str) -> str:
-    """Отправляет запрос на Gen-API и ждет результата через Long Polling с минималистичным парсингом."""
+    """
+    Отправляет запрос на Gen-API и ждет результата через Long Polling.
+    Включает гибкий старт и безопасный парсинг ответа.
+    """
     
     input_data = {
         "messages": [
@@ -63,12 +67,13 @@ async def generate_response_from_api(user_text: str) -> str:
         request_id = data_start.get("request_id")
         status = data_start.get("status")
 
-        if not request_id or status != "starting":
+        # Проверка на успешный старт задачи (допускаем "starting" или "processing")
+        if not request_id or status not in ["starting", "processing"]:
             logging.error(f"❌ Failed to start Gen-API request: {data_start}")
             return f"❌ Gen-API не смог начать задачу. Статус: {status}."
 
         # --- ШАГ 2: В цикле ждем выполнения задачи (Long Polling) ---
-        max_attempts = 15 
+        max_attempts = 15 # Максимум 15 попыток * 2 секунды = 30 секунд
         delay = 2 
         
         for attempt in range(max_attempts):
@@ -88,15 +93,15 @@ async def generate_response_from_api(user_text: str) -> str:
             
             if current_status == "success":
                                 
-                # --- МИНИМАЛЬНЫЙ ПАРСЕР (Основан на ТОЧНОЙ структуре) ---
+                # --- МИНИМАЛЬНЫЙ БЕЗОПАСНЫЙ ПАРСЕР (Основан на ТОЧНОЙ структуре) ---
                 try:
-                    # Прямой и безопасный доступ к тексту, как показано в логах
+                    # Прямой и безопасный доступ к тексту, как показано в логах: data_check['response'][0]['message']['content']
                     content = data_check.get("response")[0].get("message").get("content")
                     
                     logging.info(f"✅ Content parsed successfully.")
                     return content
                 except Exception as e:
-                    # Если структура отличается, мы запишем, какой именно ключ отсутствует
+                    # Если структура отличается, логируем точную ошибку и полный ответ
                     logging.error(f"❌ Critical Error: Failed to parse content. Exact error: {e}. Full response: {data_check}")
                     return f"❌ Структура ответа Gen-API изменилась. Не найден ключ/индекс: {e}."
                                 
