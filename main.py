@@ -9,25 +9,18 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties 
 
 # Настройки логирования
-# Уровень INFO будет показывать только важные события и успешный парсинг.
 logging.basicConfig(level=logging.INFO)
 
 # --- 1. Секреты и ключи из Переменных Окружения ---
-# Убедитесь, что эти переменные установлены на Bothost.ru
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GENAPI_KEY = os.getenv("GENAPI_KEY")
 
-# URL для запросов к GPT-4o mini (Старт задачи)
 URL_ENDPOINT = "https://api.gen-api.ru/api/v1/networks/gpt-4o-mini"
-# URL для проверки статуса запроса (Long Polling)
 URL_GET_REQUEST = "https://api.gen-api.ru/api/v1/request/get/"
 
-
-# Системный промпт (Душа бота)
 SYSTEM_PROMPT = "Ты — Андрей Куракин, опытный инструктор скаутского лагеря с 20-летним стажем. Твой стиль общения — бодрый и структурированный. Твоя задача — помочь составить программу дня для группы детей. Отвечай только по делу, используя скаутские принципы."
 
 # --- 2. Инициализация ---
-# Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN, 
           default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)) 
 dp = Dispatcher()
@@ -64,10 +57,13 @@ async def generate_response_from_api(user_text: str) -> str:
         response_start.raise_for_status() 
         data_start = response_start.json()
         
-        request_id = data_start.get("request_id")
+        request_id = data_start.get("id") # Обратите внимание, что ID может быть в ключе 'id' вместо 'request_id'
+        if not request_id:
+             request_id = data_start.get("request_id")
+             
         status = data_start.get("status")
 
-        # *** КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ V10: Очищаем статус от невидимых пробелов ***
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Очищаем статус от невидимых пробелов
         if isinstance(status, str):
             status = status.strip()
 
@@ -77,7 +73,7 @@ async def generate_response_from_api(user_text: str) -> str:
             return f"❌ Gen-API не смог начать задачу. Статус: {status}."
 
         # --- ШАГ 2: В цикле ждем выполнения задачи (Long Polling) ---
-        max_attempts = 15 # Максимум 15 попыток * 2 секунды = 30 секунд
+        max_attempts = 15
         delay = 2 
         
         for attempt in range(max_attempts):
@@ -97,15 +93,15 @@ async def generate_response_from_api(user_text: str) -> str:
             
             if current_status == "success":
                                 
-                # --- МИНИМАЛЬНЫЙ БЕЗОПАСНЫЙ ПАРСЕР (Основан на ТОЧНОЙ структуре) ---
+                # --- УНИВЕРСАЛЬНЫЙ БЕЗОПАСНЫЙ ПАРСЕР V11 (Ищем в 'result') ---
                 try:
-                    # Прямой и безопасный доступ к тексту
-                    content = data_check.get("response")[0].get("message").get("content")
+                    # Ищем в 'result', как показал последний лог
+                    content = data_check.get("result")[0].get("message").get("content")
                     
-                    logging.info(f"✅ Content parsed successfully.")
+                    logging.info(f"✅ Content parsed successfully from 'result'.")
                     return content
                 except Exception as e:
-                    # Если структура отличается, логируем точную ошибку и полный ответ
+                    # Если структура отличается, логируем точную ошибку
                     logging.error(f"❌ Critical Error: Failed to parse content. Exact error: {e}. Full response: {data_check}")
                     return f"❌ Структура ответа Gen-API изменилась. Не найден ключ/индекс: {e}."
                                 
