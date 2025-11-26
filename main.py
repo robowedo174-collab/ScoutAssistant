@@ -62,7 +62,7 @@ async def generate_response_from_api(user_text: str) -> str:
         status = data_start.get("status")
 
         if not request_id or status != "starting":
-            logging.error(f"Failed to start Gen-API request: {data_start}")
+            logging.error(f"❌ Failed to start Gen-API request: {data_start}")
             return f"❌ Gen-API не смог начать задачу. Статус: {status}."
 
         # --- ШАГ 2: В цикле ждем выполнения задачи (Long Polling) ---
@@ -83,70 +83,57 @@ async def generate_response_from_api(user_text: str) -> str:
             data_check = response_check.json()
             
             current_status = data_check.get("status")
-            logging.info(f"Status check: {current_status}") # DEBUG log
-            
             if current_status == "success":
                                 
-                # --- ИСПРАВЛЕННЫЙ БЕЗОПАСНЫЙ ПАРСЕР (ВЕРСИЯ V6) ---
-
-                # Попытка 1: Проверка на прямую строку в 'output' (Синхронный/старый формат)
-                if isinstance(data_check.get("output"), str):
-                    logging.info("Parser: Found direct string in 'output'")
-                    return data_check["output"]
-                                
-                # Попытка 2: Поиск в 'response' (текущий формат)
+                # --- УНИВЕРСАЛЬНЫЙ БЕЗОПАСНЫЙ ПАРСЕР (ВЕРСИЯ V7) ---
+                
+                # ПОПЫТКА 1: Поиск в 'response' (текущий формат Gen-API)
                 response_list = data_check.get("response")
                 if isinstance(response_list, list) and len(response_list) > 0:
-                    try:
-                        # Безопасный доступ с .get()
-                        content = response_list[0].get("message", {}).get("content")
-                        if content:
-                            logging.info("Parser: Found content in 'response'")
-                            return content
-                    except (IndexError, KeyError, TypeError) as e:
-                        logging.warning(f"Error parsing 'response': {e}")
+                    content = response_list[0].get("message", {}).get("content")
+                    if content:
+                        logging.info(f"✅ Content parsed successfully from 'response'")
+                        return content
                                 
-                # Попытка 3: Поиск в 'output' как массиве
+                # ПОПЫТКА 2: Поиск в 'output' как строка
+                if isinstance(data_check.get("output"), str):
+                    logging.info("✅ Content parsed as string from 'output'")
+                    return data_check["output"]
+                                
+                # ПОПЫТКА 3: Поиск в 'output' как массив
                 output_list = data_check.get("output")
                 if isinstance(output_list, list) and len(output_list) > 0:
-                    try:
-                        # Безопасный доступ с .get()
-                        content = output_list[0].get("message", {}).get("content")
-                        if content:
-                            logging.info("Parser: Found content in 'output' array")
-                            return content
-                    except (IndexError, KeyError, TypeError) as e:
-                        logging.warning(f"Error parsing 'output' array: {e}")
-                                
-                # Попытка 4: Если есть 'result' как строка (на случай ошибки или другого формата)
-                if isinstance(data_check.get("result"), str):
-                    logging.info("Parser: Found direct string in 'result'")
-                    return data_check["result"]
+                    content = output_list[0].get("message", {}).get("content")
+                    if content:
+                        logging.info("✅ Content parsed successfully from 'output'[0]")
+                        return content
                 
                 # Если ничего не сработало - выводим ошибку и весь ответ
-                logging.error(f"Failed to parse content. Full response: {data_check}")
-                return f"❌ Успех получен, но не удалось извлечь текст. Полный ответ: {data_check}"
+                logging.error(f"❌ Failed to parse any format. Full response: {data_check}")
+                return f"❌ Получен успех, но не удалось извлечь текст. Структура неизвестна."
                                 
             elif current_status == "processing":
-                logging.info(f"Attempt {attempt + 1}/{max_attempts}: Still processing...")
+                logging.debug(f"Processing... Attempt {attempt + 1}/{max_attempts}")
                 continue 
                             
             elif current_status in ["failed", "error"]:
                 # Обработка ошибок
-                error_msg = data_check.get("result", "Нет подробностей")
+                error_msg = data_check.get("result", ["Нет подробностей"])
                 if isinstance(error_msg, list):
                     error_msg = error_msg[0] if error_msg else "Нет подробностей"
-                return f"❌ Задача Gen-API провалена. Причина: {error_msg}"
+                logging.error(f"❌ Task failed: {error_msg}")
+                return f"❌ Gen-API ошибка: {error_msg}"
         
-        # Если цикл закончился без успеха
-        return "❌ Превышено время ожидания ответа от Gen-API (30 сек). Попробуйте позже."
+        # Если цикл закончился без успеха (таймаут)
+        logging.warning("❌ Timeout: Превышено время ожидания")
+        return "❌ Превышено время ожидания ответа от Gen-API. Попробуйте позже."
             
     except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP Error: {e.response.status_code}")
+        logging.error(f"❌ HTTP Error {e.response.status_code}")
         return f"❌ Ошибка подключения Gen-API. Код {e.response.status_code}!"
     except Exception as e:
-        logging.error(f"Unexpected error: {e}", exc_info=True)
-        return f"❌ Непредвиденная ошибка: {e}"
+        logging.error(f"❌ Unexpected error: {e}", exc_info=True)
+        return f"❌ Ошибка: {e}"
 
 
 # --- 4. Обработчик команды /start ---
