@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GENAPI_KEY = os.getenv("GENAPI_KEY")
 
-# URL для запросов к GPT-4o mini
+# URL для запросов к GPT-4o mini (Старт задачи)
 URL_ENDPOINT = "https://api.gen-api.ru/api/v1/networks/gpt-4o-mini"
 # URL для проверки статуса запроса (Long Polling)
 URL_GET_REQUEST = "https://api.gen-api.ru/api/v1/request/get/"
@@ -34,7 +34,6 @@ async def generate_response_from_api(user_text: str) -> str:
     """Отправляет запрос на Gen-API и ждет результата через Long Polling."""
     
     input_data = {
-        # Используем поведение по умолчанию (асинхронный старт, Long Polling)
         "messages": [
             {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
             {"role": "user", "content": [{"type": "text", "text": user_text}]}
@@ -66,7 +65,7 @@ async def generate_response_from_api(user_text: str) -> str:
             return f"❌ Gen-API не смог начать задачу. Статус: {status}."
 
         # --- ШАГ 2: В цикле ждем выполнения задачи (Long Polling) ---
-        max_attempts = 15 # Максимум 30 секунд ожидания (15 * 2 сек)
+        max_attempts = 15 # Максимум 30 секунд ожидания
         delay = 2 
         
         for attempt in range(max_attempts):
@@ -86,20 +85,22 @@ async def generate_response_from_api(user_text: str) -> str:
 
             if current_status == "success":
                 
-                # УНИВЕРСАЛЬНЫЙ ПАРСЕР: Проверяем output (старый формат) и response (новый формат)
-                output_data = data_check.get("output") 
-                if not output_data:
-                    output_data = data_check.get("response") # Проверка на новый формат
+                # УНИВЕРСАЛЬНЫЙ ПАРСЕР: Извлекаем список с ответом
+                # Проверяем output (старый формат Long Polling) и response (новый формат)
+                result_list = data_check.get("output") 
+                if not result_list:
+                    result_list = data_check.get("response") # Проверка на формат, который приходит в логах
                     
-                if output_data and isinstance(output_data, list) and output_data[0].get("message"):
-                    return output_data[0]["message"]["content"]
+                if result_list and isinstance(result_list, list) and result_list[0].get("message"):
+                    # Получаем контент из первого элемента списка
+                    return result_list[0]["message"]["content"]
                 else:
                     # Если формат ответа success, но структура не та, что ожидаем
                     logging.error(f"Success, but unexpected output structure: {data_check}")
                     return "❌ Успех, но получен неожиданный формат ответа."
                     
             elif current_status == "processing":
-                continue # Ждем следующей попытки
+                continue 
                 
             elif current_status == "failed" or current_status == "error":
                 # Задача завершилась ошибкой
