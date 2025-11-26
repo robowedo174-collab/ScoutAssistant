@@ -2,24 +2,39 @@ import os
 import logging
 import asyncio
 import requests 
-import time # Добавляем для задержки при Long Polling
+import time 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties 
 
-# ... (Настройки логирования, ключи, URL_ENDPOINT, SYSTEM_PROMPT остаются прежними) ...
+# Настройки логирования
+logging.basicConfig(level=logging.INFO)
 
+# --- 1. Секреты и ключи из Переменных Окружения ---
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GENAPI_KEY = os.getenv("GENAPI_KEY")
+
+# URL для запросов к GPT-4o mini
+URL_ENDPOINT = "https://api.gen-api.ru/api/v1/networks/gpt-4o-mini"
 # URL для проверки статуса запроса (Long Polling)
 URL_GET_REQUEST = "https://api.gen-api.ru/api/v1/request/get/"
 
+
+# Системный промпт (Душа бота)
+SYSTEM_PROMPT = "Ты — Андрей Куракин, опытный инструктор скаутского лагеря с 20-летним стажем. Твой стиль общения — бодрый и структурированный. Твоя задача — помочь составить программу дня для группы детей. Отвечай только по делу, используя скаутские принципы."
+
+# --- 2. Инициализация ---
+bot = Bot(token=BOT_TOKEN, 
+          default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)) 
+dp = Dispatcher()
 
 # --- 3. Вспомогательная функция для запроса к Gen-API (Long Polling) ---
 async def generate_response_from_api(user_text: str) -> str:
     """Отправляет запрос на Gen-API и ждет результата через Long Polling."""
     
     input_data = {
-        # Теперь не отправляем is_sync: true, используем поведение по умолчанию (асинхронный старт)
+        # Используем поведение по умолчанию (асинхронный старт, Long Polling)
         "messages": [
             {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
             {"role": "user", "content": [{"type": "text", "text": user_text}]}
@@ -51,8 +66,8 @@ async def generate_response_from_api(user_text: str) -> str:
             return f"❌ Gen-API не смог начать задачу. Статус: {status}."
 
         # --- ШАГ 2: В цикле ждем выполнения задачи (Long Polling) ---
-        max_attempts = 15 # Максимум 15 попыток
-        delay = 2 # Задержка 2 секунды между попытками
+        max_attempts = 15 # Максимум 30 секунд ожидания (15 * 2 сек)
+        delay = 2 
         
         for attempt in range(max_attempts):
             await asyncio.to_thread(time.sleep, delay)
@@ -70,8 +85,12 @@ async def generate_response_from_api(user_text: str) -> str:
             current_status = data_check.get("status")
 
             if current_status == "success":
-                # УСПЕХ: Извлекаем контент из output
-                output_data = data_check.get("output")
+                
+                # УНИВЕРСАЛЬНЫЙ ПАРСЕР: Проверяем output (старый формат) и response (новый формат)
+                output_data = data_check.get("output") 
+                if not output_data:
+                    output_data = data_check.get("response") # Проверка на новый формат
+                    
                 if output_data and isinstance(output_data, list) and output_data[0].get("message"):
                     return output_data[0]["message"]["content"]
                 else:
@@ -80,8 +99,7 @@ async def generate_response_from_api(user_text: str) -> str:
                     return "❌ Успех, но получен неожиданный формат ответа."
                     
             elif current_status == "processing":
-                # Задача еще в работе, ждем следующей попытки
-                continue
+                continue # Ждем следующей попытки
                 
             elif current_status == "failed" or current_status == "error":
                 # Задача завершилась ошибкой
@@ -97,4 +115,34 @@ async def generate_response_from_api(user_text: str) -> str:
         logging.error(f"Непредвиденная ошибка Long Polling: {e}")
         return f"❌ Непредвиденная ошибка. ({e})"
 
-# ... (Остальной код бота - инициализация, /start, handle_text_message - остается без изменений) ...
+
+# --- 4. Обработчик команды /start ---
+@dp.message(CommandStart())
+async def command_start_handler(message: types.Message) -> None:
+    await message.answer(
+        f"Привет, *{message.from_user.full_name}*! Я Мистер Куракин, твой личный помощник по скаутингу. \n\n"
+        f"Я готов помочь тебе составить идеальную программу для лагеря. *Просто напиши мне запрос*!"
+    )
+
+# --- 5. Обработчик всех текстовых сообщений ---
+@dp.message(F.text)
+async def handle_text_message(message: types.Message) -> None:
+    """Обрабатывает текстовые запросы пользователя и отправляет их в AI."""
+    
+    # Показываем, что бот думает
+    thinking_message = await message.answer("⏳ *Мистер Куракин* думает над программой...")
+    
+    # Получаем ответ от AI
+    ai_response = await generate_response_from_api(message.text)
+    
+    # Удаляем сообщение "думаю" и отправляем ответ
+    await bot.delete_message(message.chat.id, thinking_message.message_id)
+    await message.answer(ai_response)
+
+# --- 6. Запуск бота ---
+async def main() -> None:
+    """Запускает бота."""
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
