@@ -30,29 +30,6 @@ bot = Bot(token=BOT_TOKEN,
 dp = Dispatcher()
 
 
-# --- АГРЕССИВНЫЙ ПОИСК КОНТЕНТА (ФИНАЛЬНОЕ РЕШЕНИЕ) ---
-def find_ai_content(data):
-    """Рекурсивно ищет ключ 'content' в любой части JSON-объекта и возвращает его."""
-    
-    if isinstance(data, dict):
-        # 1. Если это словарь, проверяем, содержит ли он 'content'
-        if 'content' in data and isinstance(data['content'], str):
-            return data['content']
-        # 2. Ищем вложенные словари и списки
-        for key, value in data.items():
-            result = find_ai_content(value)
-            if result:
-                return result
-    
-    elif isinstance(data, list):
-        # 3. Если это список, ищем в каждом элементе
-        for item in data:
-            result = find_ai_content(item)
-            if result:
-                return result
-    return None
-
-
 # --- 3. Вспомогательная функция для запроса к Gen-API (Long Polling) ---
 async def generate_response_from_api(user_text: str) -> str:
     """Отправляет запрос на Gen-API и ждет результата через Long Polling с универсальным парсингом."""
@@ -109,15 +86,37 @@ async def generate_response_from_api(user_text: str) -> str:
 
             if current_status == "success":
                 
-                # --- ИСПОЛЬЗУЕМ АГРЕССИВНЫЙ ПОИСК ---
-                ai_content = find_ai_content(data_check)
+                # --- УНИВЕРСАЛЬНЫЙ ПАРСЕР V5: УЧЕТ СТРОК И МАССИВОВ ---
+
+                # Попытка 1: Проверка на прямую строку в 'output' (Синхронный/старый формат)
+                if isinstance(data_check.get("output"), str):
+                    logging.info("PARSER V5: Found direct string in 'output'.")
+                    return data_check["output"]
                 
-                if ai_content:
-                    return ai_content
-                else:
-                    # Если текст найти не удалось
-                    logging.error(f"Success, but UNPARSABLE structure: {data_check}")
-                    return "❌ Успех получен, но не удалось извлечь текст ответа (проблема с JSON-структурой)."
+                # Попытка 2: Проверка на массив в 'response' (Текущий Long Polling формат из логов)
+                result_list_response = data_check.get("response") 
+                    
+                if (result_list_response and isinstance(result_list_response, list) and 
+                    len(result_list_response) > 0 and 
+                    result_list_response[0].get("message") and 
+                    result_list_response[0]["message"].get("content")):
+                    
+                    logging.info("PARSER V5: Found array in 'response'.")
+                    return result_list_response[0]["message"]["content"]
+                
+                # Попытка 3: Проверка на массив в 'output' (Старый Long Polling формат)
+                result_list_output = data_check.get("output")
+                if (result_list_output and isinstance(result_list_output, list) and 
+                    len(result_list_output) > 0 and 
+                    result_list_output[0].get("message") and 
+                    result_list_output[0]["message"].get("content")):
+                    
+                    logging.info("PARSER V5: Found array in 'output'.")
+                    return result_list_output[0]["message"]["content"]
+
+                # Если ничего не сработало
+                logging.error(f"Failed to parse content from success response: {data_check}")
+                return "❌ Успех получен, но не удалось извлечь текст ответа (проблема с JSON-структурой)."
                     
             elif current_status == "processing":
                 continue 
