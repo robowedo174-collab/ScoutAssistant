@@ -32,7 +32,7 @@ dp = Dispatcher()
 
 # --- 3. Вспомогательная функция для запроса к Gen-API (Long Polling) ---
 async def generate_response_from_api(user_text: str) -> str:
-    """Отправляет запрос на Gen-API и ждет результата через Long Polling с универсальным парсингом."""
+    """Отправляет запрос на Gen-API и ждет результата через Long Polling с безопасным парсингом."""
     
     input_data = {
         "messages": [
@@ -83,57 +83,70 @@ async def generate_response_from_api(user_text: str) -> str:
             data_check = response_check.json()
             
             current_status = data_check.get("status")
-
+            logging.info(f"Status check: {current_status}") # DEBUG log
+            
             if current_status == "success":
-                
-                # --- УНИВЕРСАЛЬНЫЙ ПАРСЕР V5: УЧЕТ СТРОК И МАССИВОВ ---
+                                
+                # --- ИСПРАВЛЕННЫЙ БЕЗОПАСНЫЙ ПАРСЕР (ВЕРСИЯ V6) ---
 
                 # Попытка 1: Проверка на прямую строку в 'output' (Синхронный/старый формат)
                 if isinstance(data_check.get("output"), str):
-                    logging.info("PARSER V5: Found direct string in 'output'.")
+                    logging.info("Parser: Found direct string in 'output'")
                     return data_check["output"]
+                                
+                # Попытка 2: Поиск в 'response' (текущий формат)
+                response_list = data_check.get("response")
+                if isinstance(response_list, list) and len(response_list) > 0:
+                    try:
+                        # Безопасный доступ с .get()
+                        content = response_list[0].get("message", {}).get("content")
+                        if content:
+                            logging.info("Parser: Found content in 'response'")
+                            return content
+                    except (IndexError, KeyError, TypeError) as e:
+                        logging.warning(f"Error parsing 'response': {e}")
+                                
+                # Попытка 3: Поиск в 'output' как массиве
+                output_list = data_check.get("output")
+                if isinstance(output_list, list) and len(output_list) > 0:
+                    try:
+                        # Безопасный доступ с .get()
+                        content = output_list[0].get("message", {}).get("content")
+                        if content:
+                            logging.info("Parser: Found content in 'output' array")
+                            return content
+                    except (IndexError, KeyError, TypeError) as e:
+                        logging.warning(f"Error parsing 'output' array: {e}")
+                                
+                # Попытка 4: Если есть 'result' как строка (на случай ошибки или другого формата)
+                if isinstance(data_check.get("result"), str):
+                    logging.info("Parser: Found direct string in 'result'")
+                    return data_check["result"]
                 
-                # Попытка 2: Проверка на массив в 'response' (Текущий Long Polling формат из логов)
-                result_list_response = data_check.get("response") 
-                    
-                if (result_list_response and isinstance(result_list_response, list) and 
-                    len(result_list_response) > 0 and 
-                    result_list_response[0].get("message") and 
-                    result_list_response[0]["message"].get("content")):
-                    
-                    logging.info("PARSER V5: Found array in 'response'.")
-                    return result_list_response[0]["message"]["content"]
-                
-                # Попытка 3: Проверка на массив в 'output' (Старый Long Polling формат)
-                result_list_output = data_check.get("output")
-                if (result_list_output and isinstance(result_list_output, list) and 
-                    len(result_list_output) > 0 and 
-                    result_list_output[0].get("message") and 
-                    result_list_output[0]["message"].get("content")):
-                    
-                    logging.info("PARSER V5: Found array in 'output'.")
-                    return result_list_output[0]["message"]["content"]
-
-                # Если ничего не сработало
-                logging.error(f"Failed to parse content from success response: {data_check}")
-                return "❌ Успех получен, но не удалось извлечь текст ответа (проблема с JSON-структурой)."
-                    
+                # Если ничего не сработало - выводим ошибку и весь ответ
+                logging.error(f"Failed to parse content. Full response: {data_check}")
+                return f"❌ Успех получен, но не удалось извлечь текст. Полный ответ: {data_check}"
+                                
             elif current_status == "processing":
+                logging.info(f"Attempt {attempt + 1}/{max_attempts}: Still processing...")
                 continue 
-                
-            elif current_status == "failed" or current_status == "error":
-                # Задача завершилась ошибкой
-                error_msg = data_check.get("result", ["Нет подробностей."])[0]
+                            
+            elif current_status in ["failed", "error"]:
+                # Обработка ошибок
+                error_msg = data_check.get("result", "Нет подробностей")
+                if isinstance(error_msg, list):
+                    error_msg = error_msg[0] if error_msg else "Нет подробностей"
                 return f"❌ Задача Gen-API провалена. Причина: {error_msg}"
         
         # Если цикл закончился без успеха
-        return "❌ Превышено время ожидания ответа от Gen-API (30 секунд). Попробуйте позже."
+        return "❌ Превышено время ожидания ответа от Gen-API (30 сек). Попробуйте позже."
             
     except requests.exceptions.HTTPError as e:
-        return f"❌ Ошибка подключения Gen-API. Код {e.response.status_code}. Проверьте токен или адрес API!"
+        logging.error(f"HTTP Error: {e.response.status_code}")
+        return f"❌ Ошибка подключения Gen-API. Код {e.response.status_code}!"
     except Exception as e:
-        logging.error(f"Непредвиденная ошибка Long Polling: {e}")
-        return f"❌ Непредвиденная ошибка. ({e})"
+        logging.error(f"Unexpected error: {e}", exc_info=True)
+        return f"❌ Непредвиденная ошибка: {e}"
 
 
 # --- 4. Обработчик команды /start ---
