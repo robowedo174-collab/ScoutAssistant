@@ -67,6 +67,10 @@ async def generate_response_from_api(user_text: str) -> str:
         request_id = data_start.get("request_id")
         status = data_start.get("status")
 
+        # *** КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ V10: Очищаем статус от невидимых пробелов ***
+        if isinstance(status, str):
+            status = status.strip()
+
         # Проверка на успешный старт задачи (допускаем "starting" или "processing")
         if not request_id or status not in ["starting", "processing"]:
             logging.error(f"❌ Failed to start Gen-API request: {data_start}")
@@ -95,7 +99,7 @@ async def generate_response_from_api(user_text: str) -> str:
                                 
                 # --- МИНИМАЛЬНЫЙ БЕЗОПАСНЫЙ ПАРСЕР (Основан на ТОЧНОЙ структуре) ---
                 try:
-                    # Прямой и безопасный доступ к тексту, как показано в логах: data_check['response'][0]['message']['content']
+                    # Прямой и безопасный доступ к тексту
                     content = data_check.get("response")[0].get("message").get("content")
                     
                     logging.info(f"✅ Content parsed successfully.")
