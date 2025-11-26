@@ -30,7 +30,6 @@ dp = Dispatcher()
 async def generate_response_from_api(user_text: str) -> str:
     """
     Отправляет запрос на Gen-API и ждет результата через Long Polling.
-    Включает гибкий старт и безопасный парсинг ответа.
     """
     
     input_data = {
@@ -57,13 +56,13 @@ async def generate_response_from_api(user_text: str) -> str:
         response_start.raise_for_status() 
         data_start = response_start.json()
         
-        request_id = data_start.get("id") # Обратите внимание, что ID может быть в ключе 'id' вместо 'request_id'
+        request_id = data_start.get("id")
         if not request_id:
              request_id = data_start.get("request_id")
              
         status = data_start.get("status")
 
-        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Очищаем статус от невидимых пробелов
+        # Очищаем статус от невидимых пробелов
         if isinstance(status, str):
             status = status.strip()
 
@@ -73,7 +72,7 @@ async def generate_response_from_api(user_text: str) -> str:
             return f"❌ Gen-API не смог начать задачу. Статус: {status}."
 
         # --- ШАГ 2: В цикле ждем выполнения задачи (Long Polling) ---
-        max_attempts = 15
+        max_attempts = 25 # <-- УВЕЛИЧЕН ТАЙМАУТ: 25 попыток * 2 сек = 50 сек
         delay = 2 
         
         for attempt in range(max_attempts):
