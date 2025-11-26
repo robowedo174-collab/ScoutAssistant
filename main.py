@@ -1,6 +1,40 @@
+import os
+import logging
+import asyncio
+import requests 
+import time 
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import CommandStart
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties 
+
+# Настройки логирования
+# Уровень INFO будет показывать только важные события и успешный парсинг.
+logging.basicConfig(level=logging.INFO)
+
+# --- 1. Секреты и ключи из Переменных Окружения ---
+# Убедитесь, что эти переменные установлены на Bothost.ru
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GENAPI_KEY = os.getenv("GENAPI_KEY")
+
+# URL для запросов к GPT-4o mini (Старт задачи)
+URL_ENDPOINT = "https://api.gen-api.ru/api/v1/networks/gpt-4o-mini"
+# URL для проверки статуса запроса (Long Polling)
+URL_GET_REQUEST = "https://api.gen-api.ru/api/v1/request/get/"
+
+
+# Системный промпт (Душа бота)
+SYSTEM_PROMPT = "Ты — Андрей Куракин, опытный инструктор скаутского лагеря с 20-летним стажем. Твой стиль общения — бодрый и структурированный. Твоя задача — помочь составить программу дня для группы детей. Отвечай только по делу, используя скаутские принципы."
+
+# --- 2. Инициализация ---
+bot = Bot(token=BOT_TOKEN, 
+          default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)) 
+dp = Dispatcher()
+
+
 # --- 3. Вспомогательная функция для запроса к Gen-API (Long Polling) ---
 async def generate_response_from_api(user_text: str) -> str:
-    """Отправляет запрос на Gen-API и ждет результата через Long Polling с ОДНОЙ, жесткой проверкой."""
+    """Отправляет запрос на Gen-API и ждет результата через Long Polling с минималистичным парсингом."""
     
     input_data = {
         "messages": [
@@ -54,15 +88,16 @@ async def generate_response_from_api(user_text: str) -> str:
             
             if current_status == "success":
                                 
-                # --- ЖЕСТКАЯ ПРОВЕРКА (Сценарий: 'response' всегда есть) ---
+                # --- МИНИМАЛЬНЫЙ ПАРСЕР (Основан на ТОЧНОЙ структуре) ---
                 try:
-                    # Пытаемся получить текст по САМОМУ СТАБИЛЬНОМУ пути
-                    content = data_check["response"][0]["message"]["content"]
-                    logging.info(f"✅ Content parsed successfully using direct path.")
+                    # Прямой и безопасный доступ к тексту, как показано в логах
+                    content = data_check.get("response")[0].get("message").get("content")
+                    
+                    logging.info(f"✅ Content parsed successfully.")
                     return content
-                except (KeyError, IndexError, TypeError) as e:
-                    # В случае ошибки, мы получим ТОЧНУЮ информацию:
-                    logging.error(f"❌ Critical Error: Failed to parse content. Missing key/index: {e}. Full response: {data_check}")
+                except Exception as e:
+                    # Если структура отличается, мы запишем, какой именно ключ отсутствует
+                    logging.error(f"❌ Critical Error: Failed to parse content. Exact error: {e}. Full response: {data_check}")
                     return f"❌ Структура ответа Gen-API изменилась. Не найден ключ/индекс: {e}."
                                 
             elif current_status == "processing":
@@ -87,3 +122,35 @@ async def generate_response_from_api(user_text: str) -> str:
     except Exception as e:
         logging.error(f"❌ Unexpected error: {e}", exc_info=True)
         return f"❌ Ошибка: {e}"
+
+
+# --- 4. Обработчик команды /start ---
+@dp.message(CommandStart())
+async def command_start_handler(message: types.Message) -> None:
+    await message.answer(
+        f"Привет, *{message.from_user.full_name}*! Я Мистер Куракин, твой личный помощник по скаутингу. \n\n"
+        f"Я готов помочь тебе составить идеальную программу для лагеря. *Просто напиши мне запрос*!"
+    )
+
+# --- 5. Обработчик всех текстовых сообщений ---
+@dp.message(F.text)
+async def handle_text_message(message: types.Message) -> None:
+    """Обрабатывает текстовые запросы пользователя и отправляет их в AI."""
+    
+    # Показываем, что бот думает
+    thinking_message = await message.answer("⏳ *Мистер Куракин* думает над программой...")
+    
+    # Получаем ответ от AI
+    ai_response = await generate_response_from_api(message.text)
+    
+    # Удаляем сообщение "думаю" и отправляем ответ
+    await bot.delete_message(message.chat.id, thinking_message.message_id)
+    await message.answer(ai_response)
+
+# --- 6. Запуск бота ---
+async def main() -> None:
+    """Запускает бота."""
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
