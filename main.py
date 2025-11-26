@@ -31,7 +31,7 @@ dp = Dispatcher()
 
 # --- 3. Вспомогательная функция для запроса к Gen-API (Long Polling) ---
 async def generate_response_from_api(user_text: str) -> str:
-    """Отправляет запрос на Gen-API и ждет результата через Long Polling."""
+    """Отправляет запрос на Gen-API и ждет результата через Long Polling с универсальным парсингом."""
     
     input_data = {
         "messages": [
@@ -65,7 +65,7 @@ async def generate_response_from_api(user_text: str) -> str:
             return f"❌ Gen-API не смог начать задачу. Статус: {status}."
 
         # --- ШАГ 2: В цикле ждем выполнения задачи (Long Polling) ---
-        max_attempts = 15 # Максимум 30 секунд ожидания
+        max_attempts = 15 
         delay = 2 
         
         for attempt in range(max_attempts):
@@ -85,19 +85,29 @@ async def generate_response_from_api(user_text: str) -> str:
 
             if current_status == "success":
                 
-                # УНИВЕРСАЛЬНЫЙ ПАРСЕР: Извлекаем список с ответом
-                # Проверяем output (старый формат Long Polling) и response (новый формат)
-                result_list = data_check.get("output") 
-                if not result_list:
-                    result_list = data_check.get("response") # Проверка на формат, который приходит в логах
+                # --- АГРЕССИВНЫЙ УНИВЕРСАЛЬНЫЙ ПАРСЕР: ПОИСК ТЕКСТА ---
+                result_list = None
+                
+                # Поиск 1: В ключе 'output' (Старый формат)
+                if isinstance(data_check.get("output"), list):
+                    result_list = data_check.get("output")
+                
+                # Поиск 2: В ключе 'response' (Новый формат из логов)
+                elif isinstance(data_check.get("response"), list):
+                    result_list = data_check.get("response")
                     
-                if result_list and isinstance(result_list, list) and result_list[0].get("message"):
-                    # Получаем контент из первого элемента списка
+                # Поиск 3: Если сам ответ - это список (Синхронный/Корневой формат)
+                elif isinstance(data_check, list):
+                    result_list = data_check
+                    
+                
+                if result_list and len(result_list) > 0 and result_list[0].get("message") and result_list[0]["message"].get("content"):
+                    # Получаем контент
                     return result_list[0]["message"]["content"]
                 else:
-                    # Если формат ответа success, но структура не та, что ожидаем
-                    logging.error(f"Success, but unexpected output structure: {data_check}")
-                    return "❌ Успех, но получен неожиданный формат ответа."
+                    # Если формат ответа success, но структуру найти не удалось
+                    logging.error(f"Success, but UNPARSABLE structure: {data_check}")
+                    return "❌ Успех получен, но не удалось извлечь текст ответа (проблема с JSON-структурой)."
                     
             elif current_status == "processing":
                 continue 
